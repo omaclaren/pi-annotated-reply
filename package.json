@@ -1,0 +1,22 @@
+{
+  "name": "pi-annotated-reply",
+  "version": "0.1.0",
+  "description": "Annotated reply workflow for pi",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "pi-package"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/omaclaren/pi-annotated-reply.git"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*"
+  }
+}
