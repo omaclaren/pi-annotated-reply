@@ -17,7 +17,8 @@ You can annotate inline however you like, save and exit, and the edited content 
 
 | Command | Description |
 |---------|-------------|
-| `/reply` | Open the last assistant reply for annotation |
+| `/reply` | Open the last assistant reply for annotation in pi's extension editor |
+| `/reply-editor` | Open the last assistant reply directly in your external editor (`$VISUAL`/`$EDITOR`) |
 | `/annotated-reply` | Alias for `/reply` |
 
 ## Install
@@ -40,5 +41,7 @@ pi -e https://github.com/omaclaren/pi-annotated-reply
 
 ## Notes
 
-- Uses pi's built-in extension editor, including external editor support (`Ctrl+G`, `$VISUAL`/`$EDITOR`).
-- If the latest assistant message is incomplete or has no text content, `/reply` shows a warning.
+- `/reply` uses pi's built-in extension editor (you can still press `Ctrl+G` there to jump to external editor).
+- `/reply-editor` skips that extra step and launches your external editor immediately.
+- If `$VISUAL`/`$EDITOR` is not set, `/reply-editor` automatically falls back to the built-in `/reply` editor.
+- If the latest assistant message is incomplete or has no text content, the command shows a warning.
