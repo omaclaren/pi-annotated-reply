@@ -45,3 +45,7 @@ pi -e https://github.com/omaclaren/pi-annotated-reply
 - `/reply-editor` skips that extra step and launches your external editor immediately.
 - If `$VISUAL`/`$EDITOR` is not set, `/reply-editor` automatically falls back to the built-in `/reply` editor.
 - If the latest assistant message is incomplete or has no text content, the command shows a warning.
+
+## License
+
+MIT
