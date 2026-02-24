@@ -1,8 +1,6 @@
 # pi-annotated-reply
 
-Annotate source content in [pi](https://github.com/badlogic/pi-mono), then load the edited result into the main editor for normal submission.
-
-Now supports annotating either the last model response or a file source.
+Adds an annotated-reply workflow to [pi](https://github.com/badlogic/pi-mono). Construct prompts by annotating either the last model response or a file. Annotated text is loaded into pi’s main editor, ready to submit as your next prompt. Source files are never modified.
 
 ## Commands
 
