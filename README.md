@@ -1,25 +1,51 @@
 # pi-annotated-reply
 
-Adds an annotated-reply workflow to [pi](https://github.com/badlogic/pi-mono).
+Annotate source content in [pi](https://github.com/badlogic/pi-mono), then load the edited result into the main editor for normal submission.
 
-Run `/reply` to open your latest assistant response in the extension editor, prefilled as markdown:
-
-```md
-annotated reply below:
-
-[assistant reply]
-
-```
-
-You can annotate inline however you like, save and exit, and the edited content is loaded into the main pi editor for normal submission.
+Now supports annotating either the last model response or a file source.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `/reply` | Open the last assistant reply for annotation in pi's extension editor |
-| `/reply-editor` | Open the last assistant reply directly in your external editor (`$VISUAL`/`$EDITOR`) |
+| `/reply` | Annotate the last model response |
+| `/reply <path>` | Annotate a file (original file is not changed) |
+| `/reply-editor` | Same as `/reply`, but opens in your external editor (`$VISUAL`/`$EDITOR`) |
+| `/reply-editor <path>` | Same as `/reply <path>`, but opens in your external editor |
 | `/annotated-reply` | Alias for `/reply` |
+| `/annotated-reply <path>` | Alias for `/reply <path>` |
+| `/annotated-reply-editor` | Alias for `/reply-editor` |
+| `/annotated-reply-editor <path>` | Alias for `/reply-editor <path>` |
+
+## Prefill format
+
+The extension prefills content like:
+
+```md
+annotated reply below:
+original source: last model response
+
+---
+
+<model response content>
+```
+
+or
+
+```md
+annotated reply below:
+original source: file ./path/to/file.ts
+
+---
+
+<file content>
+```
+
+## Annotation style (suggested)
+
+A simple pattern is to keep source text and add notes in square brackets, e.g. `[like this]`.
+
+This is only a suggested pattern, not a strict format. Use whatever annotation style is clear for your workflow.
 
 ## Install
 
@@ -41,10 +67,9 @@ pi -e https://github.com/omaclaren/pi-annotated-reply
 
 ## Notes
 
-- `/reply` uses pi's built-in extension editor (you can still press `Ctrl+G` there to jump to external editor).
-- `/reply-editor` skips that extra step and launches your external editor immediately.
-- If `$VISUAL`/`$EDITOR` is not set, `/reply-editor` automatically falls back to the built-in `/reply` editor.
-- If the latest assistant message is incomplete or has no text content, the command shows a warning.
+- If `$VISUAL`/`$EDITOR` is not set, `*-editor` commands automatically fall back to pi's built-in extension editor.
+- If the latest assistant message is incomplete or has no text content, reply-based commands show a warning.
+- File annotation reads the selected file content and injects an editable copy into the editor. The source file is never modified by this extension.
 
 ## License
 

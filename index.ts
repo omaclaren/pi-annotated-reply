@@ -1,12 +1,17 @@
 import { BorderedLoader } from "@mariozechner/pi-coding-agent";
 import type { ExtensionAPI, ExtensionCommandContext, SessionEntry } from "@mariozechner/pi-coding-agent";
 import { spawnSync } from "node:child_process";
-import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
-type LastAssistantResult =
-	| { ok: true; markdown: string }
+type AnnotationSource = {
+	label: string;
+	markdown: string;
+};
+
+type AnnotationSourceResult =
+	| { ok: true; source: AnnotationSource }
 	| { ok: false; message: string; level: "warning" | "error" };
 
 type ParsedCommand = {
@@ -43,14 +48,44 @@ function parseCommandSpec(spec: string): ParsedCommand | null {
 	};
 }
 
-function getLastAssistantMarkdown(ctx: ExtensionCommandContext): LastAssistantResult {
+function parsePathArgument(args: string): string | null {
+	const trimmed = args.trim();
+	if (!trimmed) return null;
+
+	if (
+		(trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2) ||
+		(trimmed.startsWith("'") && trimmed.endsWith("'") && trimmed.length >= 2)
+	) {
+		return trimmed.slice(1, -1).trim();
+	}
+
+	return trimmed;
+}
+
+function normalizePathInput(pathInput: string): string {
+	const trimmed = pathInput.trim();
+	if (trimmed.startsWith("@")) return trimmed.slice(1).trim();
+	return trimmed;
+}
+
+function expandHome(pathInput: string): string {
+	if (pathInput === "~") return process.env.HOME ?? pathInput;
+	if (!pathInput.startsWith("~/")) return pathInput;
+
+	const home = process.env.HOME;
+	if (!home) return pathInput;
+
+	return join(home, pathInput.slice(2));
+}
+
+function getLastAssistantSource(ctx: ExtensionCommandContext): AnnotationSourceResult {
 	const branch = ctx.sessionManager.getBranch();
 
 	for (let i = branch.length - 1; i >= 0; i--) {
 		const entry = branch[i];
 		if (entry.type !== "message") continue;
 
-		const maybe = extractAssistantMarkdown(entry);
+		const maybe = extractAssistantSource(entry);
 		if (!maybe) continue;
 		return maybe;
 	}
@@ -58,7 +93,7 @@ function getLastAssistantMarkdown(ctx: ExtensionCommandContext): LastAssistantRe
 	return { ok: false, level: "warning", message: "No assistant reply found in the current branch." };
 }
 
-function extractAssistantMarkdown(entry: SessionEntry): LastAssistantResult | null {
+function extractAssistantSource(entry: SessionEntry): AnnotationSourceResult | null {
 	if (entry.type !== "message") return null;
 
 	const message = entry.message;
@@ -68,7 +103,7 @@ function extractAssistantMarkdown(entry: SessionEntry): LastAssistantResult | nu
 		return {
 			ok: false,
 			level: "warning",
-			message: `Latest assistant reply is incomplete (${message.stopReason}). Wait for completion, then run /reply again.`,
+			message: `Latest assistant reply is incomplete (${message.stopReason}). Wait for completion, then run the command again.`,
 		};
 	}
 
@@ -85,26 +120,103 @@ function extractAssistantMarkdown(entry: SessionEntry): LastAssistantResult | nu
 		};
 	}
 
-	return { ok: true, markdown };
+	return {
+		ok: true,
+		source: {
+			label: "last model response",
+			markdown,
+		},
+	};
 }
 
-function buildPrefill(markdown: string): string {
-	return `annotated reply below:\n\n${markdown}\n\n`;
+function getFileSource(ctx: ExtensionCommandContext, args: string): AnnotationSourceResult {
+	const rawPathArg = parsePathArgument(args);
+	if (!rawPathArg) {
+		return {
+			ok: false,
+			level: "warning",
+			message: "Missing file path. Usage: /reply <path> or /reply-editor <path>",
+		};
+	}
+
+	const normalizedInput = normalizePathInput(rawPathArg);
+	if (!normalizedInput) {
+		return {
+			ok: false,
+			level: "warning",
+			message: "Missing file path after normalization.",
+		};
+	}
+
+	const expandedInput = expandHome(normalizedInput);
+	const resolvedPath = isAbsolute(expandedInput) ? expandedInput : resolve(ctx.cwd, expandedInput);
+
+	let stats: ReturnType<typeof statSync>;
+	try {
+		stats = statSync(resolvedPath);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return {
+			ok: false,
+			level: "error",
+			message: `Could not access file: ${normalizedInput} (${message})`,
+		};
+	}
+
+	if (!stats.isFile()) {
+		return {
+			ok: false,
+			level: "warning",
+			message: `Path is not a file: ${normalizedInput}`,
+		};
+	}
+
+	let markdown: string;
+	try {
+		markdown = readFileSync(resolvedPath, "utf-8").trimEnd();
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return {
+			ok: false,
+			level: "error",
+			message: `Failed to read file: ${normalizedInput} (${message})`,
+		};
+	}
+
+	if (markdown.includes("\u0000")) {
+		return {
+			ok: false,
+			level: "warning",
+			message: `File appears to be binary and is not suitable for text annotation: ${normalizedInput}`,
+		};
+	}
+
+	return {
+		ok: true,
+		source: {
+			label: `file ${normalizedInput}`,
+			markdown,
+		},
+	};
 }
 
-function loadEditedReplyIntoEditor(ctx: ExtensionCommandContext, edited: string): void {
+function buildPrefill(source: AnnotationSource): string {
+	return `annotated reply below:\noriginal source: ${source.label}\n\n---\n\n${source.markdown}\n\n`;
+}
+
+function loadEditedContentIntoEditor(ctx: ExtensionCommandContext, edited: string): void {
 	ctx.ui.setEditorText(edited);
-	ctx.ui.notify("Annotated reply loaded into the editor. Submit when ready.", "info");
+	ctx.ui.notify("Annotated content loaded into the editor. Submit when ready.", "info");
 }
 
-async function editInBuiltInReplyEditor(ctx: ExtensionCommandContext, markdown: string): Promise<void> {
-	const edited = await ctx.ui.editor("Annotated reply", buildPrefill(markdown));
+async function editInBuiltInEditor(ctx: ExtensionCommandContext, source: AnnotationSource): Promise<void> {
+	const edited = await ctx.ui.editor("Annotate source", buildPrefill(source));
 	if (edited === undefined) {
-		ctx.ui.notify("Cancelled annotated reply.", "info");
+		ctx.ui.notify("Cancelled annotation.", "info");
 		return;
 	}
 
-	loadEditedReplyIntoEditor(ctx, edited);
+	loadEditedContentIntoEditor(ctx, edited);
 }
 
 async function openInExternalEditor(
@@ -132,7 +244,7 @@ async function openInExternalEditor(
 		loader.onAbort = () => finish({ ok: false, cancelled: true });
 
 		void (async () => {
-			const tempFile = join(tmpdir(), `pi-annotated-reply-${Date.now()}-${Math.random().toString(36).slice(2)}.md`);
+			const tempFile = join(tmpdir(), `pi-annotate-${Date.now()}-${Math.random().toString(36).slice(2)}.md`);
 			let tuiStopped = false;
 			try {
 				writeFileSync(tempFile, prefill, "utf-8");
@@ -178,76 +290,78 @@ async function openInExternalEditor(
 	return result ?? { ok: false, cancelled: true };
 }
 
-async function runReply(ctx: ExtensionCommandContext): Promise<void> {
+async function runReply(
+	ctx: ExtensionCommandContext,
+	args: string,
+	options: { externalEditor: boolean },
+): Promise<void> {
 	if (!ctx.hasUI) {
-		ctx.ui.notify("/reply requires interactive mode.", "error");
+		ctx.ui.notify("This command requires interactive mode.", "error");
 		return;
 	}
 
 	await ctx.waitForIdle();
 
-	const lastReply = getLastAssistantMarkdown(ctx);
-	if (!lastReply.ok) {
-		ctx.ui.notify(lastReply.message, lastReply.level);
+	const sourceResult = parsePathArgument(args)
+		? getFileSource(ctx, args)
+		: getLastAssistantSource(ctx);
+
+	if (!sourceResult.ok) {
+		ctx.ui.notify(sourceResult.message, sourceResult.level);
 		return;
 	}
 
-	await editInBuiltInReplyEditor(ctx, lastReply.markdown);
-}
-
-async function runReplyEditor(ctx: ExtensionCommandContext): Promise<void> {
-	if (!ctx.hasUI) {
-		ctx.ui.notify("/reply-editor requires interactive mode.", "error");
-		return;
-	}
-
-	await ctx.waitForIdle();
-
-	const lastReply = getLastAssistantMarkdown(ctx);
-	if (!lastReply.ok) {
-		ctx.ui.notify(lastReply.message, lastReply.level);
+	if (!options.externalEditor) {
+		await editInBuiltInEditor(ctx, sourceResult.source);
 		return;
 	}
 
 	const commandSpec = process.env.VISUAL?.trim() || process.env.EDITOR?.trim();
 	if (!commandSpec) {
-		ctx.ui.notify("No $VISUAL/$EDITOR found. Falling back to /reply editor.", "warning");
-		await editInBuiltInReplyEditor(ctx, lastReply.markdown);
+		ctx.ui.notify("No $VISUAL/$EDITOR found. Falling back to built-in editor.", "warning");
+		await editInBuiltInEditor(ctx, sourceResult.source);
 		return;
 	}
 
-	const result = await openInExternalEditor(ctx, buildPrefill(lastReply.markdown), commandSpec);
+	const result = await openInExternalEditor(ctx, buildPrefill(sourceResult.source), commandSpec);
 	if (!result.ok) {
 		if ("cancelled" in result && result.cancelled) {
-			ctx.ui.notify("Cancelled annotated reply.", "info");
+			ctx.ui.notify("Cancelled annotation.", "info");
 			return;
 		}
 		ctx.ui.notify(`External editor failed: ${result.message}`, "error");
 		return;
 	}
 
-	loadEditedReplyIntoEditor(ctx, result.edited);
+	loadEditedContentIntoEditor(ctx, result.edited);
 }
 
 export default function (pi: ExtensionAPI) {
 	pi.registerCommand("reply", {
-		description: "Open the last assistant reply for annotation and load it into the editor",
-		handler: async (_args, ctx) => {
-			await runReply(ctx);
+		description: "Annotate the last model response, or annotate a file with /reply <path>",
+		handler: async (args, ctx) => {
+			await runReply(ctx, args, { externalEditor: false });
 		},
 	});
 
 	pi.registerCommand("reply-editor", {
-		description: "Open the last assistant reply directly in your external editor and load it into the editor",
-		handler: async (_args, ctx) => {
-			await runReplyEditor(ctx);
+		description: "Like /reply, but opens in external editor ($VISUAL/$EDITOR)",
+		handler: async (args, ctx) => {
+			await runReply(ctx, args, { externalEditor: true });
 		},
 	});
 
 	pi.registerCommand("annotated-reply", {
 		description: "Alias for /reply",
-		handler: async (_args, ctx) => {
-			await runReply(ctx);
+		handler: async (args, ctx) => {
+			await runReply(ctx, args, { externalEditor: false });
+		},
+	});
+
+	pi.registerCommand("annotated-reply-editor", {
+		description: "Alias for /reply-editor",
+		handler: async (args, ctx) => {
+			await runReply(ctx, args, { externalEditor: true });
 		},
 	});
 }
