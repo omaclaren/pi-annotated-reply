@@ -8,12 +8,15 @@ Adds an annotated-reply workflow to [pi](https://github.com/badlogic/pi-mono). C
 |---------|-------------|
 | `/reply` | Annotate the last model response |
 | `/reply <path>` | Annotate a file (original file is not changed) |
+| `/reply --raw` | Load raw content into editor without annotation header |
 | `/reply-editor` | Same as `/reply`, but opens in your external editor (`$VISUAL`/`$EDITOR`) |
 | `/reply-editor <path>` | Same as `/reply <path>`, but opens in your external editor |
 | `/annotated-reply` | Alias for `/reply` |
 | `/annotated-reply <path>` | Alias for `/reply <path>` |
 | `/annotated-reply-editor` | Alias for `/reply-editor` |
 | `/annotated-reply-editor <path>` | Alias for `/reply-editor <path>` |
+
+All commands accept `--raw` to skip the annotation header and load bare content into the editor.
 
 ## Prefill format
 
