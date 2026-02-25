@@ -293,7 +293,7 @@ async function openInExternalEditor(
 async function runReply(
 	ctx: ExtensionCommandContext,
 	args: string,
-	options: { externalEditor: boolean },
+	options: { externalEditor: boolean; raw: boolean },
 ): Promise<void> {
 	if (!ctx.hasUI) {
 		ctx.ui.notify("This command requires interactive mode.", "error");
@@ -311,22 +311,36 @@ async function runReply(
 		return;
 	}
 
+	const content = options.raw
+		? sourceResult.source.markdown + "\n"
+		: buildPrefill(sourceResult.source);
+
 	if (!options.externalEditor) {
-		await editInBuiltInEditor(ctx, sourceResult.source);
+		if (options.raw) {
+			ctx.ui.setEditorText(content);
+			ctx.ui.notify(`Raw content from ${sourceResult.source.label} loaded into editor.`, "info");
+		} else {
+			await editInBuiltInEditor(ctx, sourceResult.source);
+		}
 		return;
 	}
 
 	const commandSpec = process.env.VISUAL?.trim() || process.env.EDITOR?.trim();
 	if (!commandSpec) {
 		ctx.ui.notify("No $VISUAL/$EDITOR found. Falling back to built-in editor.", "warning");
-		await editInBuiltInEditor(ctx, sourceResult.source);
+		if (options.raw) {
+			ctx.ui.setEditorText(content);
+			ctx.ui.notify(`Raw content from ${sourceResult.source.label} loaded into editor.`, "info");
+		} else {
+			await editInBuiltInEditor(ctx, sourceResult.source);
+		}
 		return;
 	}
 
-	const result = await openInExternalEditor(ctx, buildPrefill(sourceResult.source), commandSpec);
+	const result = await openInExternalEditor(ctx, content, commandSpec);
 	if (!result.ok) {
 		if ("cancelled" in result && result.cancelled) {
-			ctx.ui.notify("Cancelled annotation.", "info");
+			ctx.ui.notify("Cancelled.", "info");
 			return;
 		}
 		ctx.ui.notify(`External editor failed: ${result.message}`, "error");
@@ -336,32 +350,42 @@ async function runReply(
 	loadEditedContentIntoEditor(ctx, result.edited);
 }
 
+function extractRawFlag(args: string): { raw: boolean; cleanArgs: string } {
+	const raw = /\s*--raw\s*/.test(args);
+	const cleanArgs = args.replace(/\s*--raw\s*/g, " ").trim();
+	return { raw, cleanArgs };
+}
+
 export default function (pi: ExtensionAPI) {
 	pi.registerCommand("reply", {
-		description: "Annotate the last model response, or annotate a file with /reply <path>",
+		description: "Annotate the last model response, or a file with /reply <path>. Use --raw to skip annotation header.",
 		handler: async (args, ctx) => {
-			await runReply(ctx, args, { externalEditor: false });
+			const { raw, cleanArgs } = extractRawFlag(args);
+			await runReply(ctx, cleanArgs, { externalEditor: false, raw });
 		},
 	});
 
 	pi.registerCommand("reply-editor", {
-		description: "Like /reply, but opens in external editor ($VISUAL/$EDITOR)",
+		description: "Like /reply, but opens in external editor ($VISUAL/$EDITOR). Use --raw to skip annotation header.",
 		handler: async (args, ctx) => {
-			await runReply(ctx, args, { externalEditor: true });
+			const { raw, cleanArgs } = extractRawFlag(args);
+			await runReply(ctx, cleanArgs, { externalEditor: true, raw });
 		},
 	});
 
 	pi.registerCommand("annotated-reply", {
 		description: "Alias for /reply",
 		handler: async (args, ctx) => {
-			await runReply(ctx, args, { externalEditor: false });
+			const { raw, cleanArgs } = extractRawFlag(args);
+			await runReply(ctx, cleanArgs, { externalEditor: false, raw });
 		},
 	});
 
 	pi.registerCommand("annotated-reply-editor", {
 		description: "Alias for /reply-editor",
 		handler: async (args, ctx) => {
-			await runReply(ctx, args, { externalEditor: true });
+			const { raw, cleanArgs } = extractRawFlag(args);
+			await runReply(ctx, cleanArgs, { externalEditor: true, raw });
 		},
 	});
 }
