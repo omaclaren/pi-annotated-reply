@@ -24,6 +24,18 @@ type ExternalEditorResult =
 	| { ok: false; cancelled: true }
 	| { ok: false; message: string };
 
+type RunReplyOptions = {
+	externalEditor: boolean;
+	raw: boolean;
+	diff: boolean;
+};
+
+type ReplyFlags = {
+	raw: boolean;
+	diff: boolean;
+	cleanArgs: string;
+};
+
 function parseCommandSpec(spec: string): ParsedCommand | null {
 	const parts = spec.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g);
 	if (!parts || parts.length === 0) return null;
@@ -204,6 +216,20 @@ function buildPrefill(source: AnnotationSource): string {
 	return `annotated reply below:\noriginal source: ${source.label}\n\n---\n\n${source.markdown}\n\n`;
 }
 
+function isSingleDiffFence(markdown: string): boolean {
+	const trimmed = markdown.trim();
+	if (!trimmed) return false;
+	return /^(```|~~~)diff[^\n]*\n[\s\S]*\n\1[ \t]*$/i.test(trimmed);
+}
+
+function wrapAsDiffFence(markdown: string): string {
+	if (isSingleDiffFence(markdown)) return markdown;
+
+	const trimmed = markdown.trimEnd();
+	const marker = trimmed.includes("```") ? "~~~" : "```";
+	return `${marker}diff\n${trimmed}\n${marker}`;
+}
+
 function loadEditedContentIntoEditor(ctx: ExtensionCommandContext, edited: string): void {
 	ctx.ui.setEditorText(edited);
 	ctx.ui.notify("Annotated content loaded into the editor. Submit when ready.", "info");
@@ -293,7 +319,7 @@ async function openInExternalEditor(
 async function runReply(
 	ctx: ExtensionCommandContext,
 	args: string,
-	options: { externalEditor: boolean; raw: boolean },
+	options: RunReplyOptions,
 ): Promise<void> {
 	if (!ctx.hasUI) {
 		ctx.ui.notify("This command requires interactive mode.", "error");
@@ -311,16 +337,20 @@ async function runReply(
 		return;
 	}
 
+	const source = options.diff
+		? { ...sourceResult.source, markdown: wrapAsDiffFence(sourceResult.source.markdown) }
+		: sourceResult.source;
+
 	const content = options.raw
-		? sourceResult.source.markdown + "\n"
-		: buildPrefill(sourceResult.source);
+		? source.markdown + "\n"
+		: buildPrefill(source);
 
 	if (!options.externalEditor) {
 		if (options.raw) {
 			ctx.ui.setEditorText(content);
-			ctx.ui.notify(`Raw content from ${sourceResult.source.label} loaded into editor.`, "info");
+			ctx.ui.notify(`Raw content from ${source.label} loaded into editor.`, "info");
 		} else {
-			await editInBuiltInEditor(ctx, sourceResult.source);
+			await editInBuiltInEditor(ctx, source);
 		}
 		return;
 	}
@@ -330,9 +360,9 @@ async function runReply(
 		ctx.ui.notify("No $VISUAL/$EDITOR found. Falling back to built-in editor.", "warning");
 		if (options.raw) {
 			ctx.ui.setEditorText(content);
-			ctx.ui.notify(`Raw content from ${sourceResult.source.label} loaded into editor.`, "info");
+			ctx.ui.notify(`Raw content from ${source.label} loaded into editor.`, "info");
 		} else {
-			await editInBuiltInEditor(ctx, sourceResult.source);
+			await editInBuiltInEditor(ctx, source);
 		}
 		return;
 	}
@@ -350,42 +380,78 @@ async function runReply(
 	loadEditedContentIntoEditor(ctx, result.edited);
 }
 
-function extractRawFlag(args: string): { raw: boolean; cleanArgs: string } {
-	const raw = /\s*--raw\s*/.test(args);
-	const cleanArgs = args.replace(/\s*--raw\s*/g, " ").trim();
-	return { raw, cleanArgs };
+function extractReplyFlags(args: string): ReplyFlags {
+	const raw = /(^|\s)--raw(?=\s|$)/.test(args);
+	const diff = /(^|\s)--diff(?=\s|$)/.test(args);
+	const cleanArgs = args
+		.replace(/(^|\s)--raw(?=\s|$)/g, " ")
+		.replace(/(^|\s)--diff(?=\s|$)/g, " ")
+		.trim();
+	return { raw, diff, cleanArgs };
 }
 
 export default function (pi: ExtensionAPI) {
 	pi.registerCommand("reply", {
-		description: "Annotate the last model response, or a file with /reply <path>. Use --raw to skip annotation header.",
+		description: "Annotate the last model response, or a file with /reply <path>. Use --raw to skip header, --diff to wrap content in a diff fence.",
 		handler: async (args, ctx) => {
-			const { raw, cleanArgs } = extractRawFlag(args);
-			await runReply(ctx, cleanArgs, { externalEditor: false, raw });
+			const { raw, diff, cleanArgs } = extractReplyFlags(args);
+			await runReply(ctx, cleanArgs, { externalEditor: false, raw, diff });
 		},
 	});
 
 	pi.registerCommand("reply-editor", {
-		description: "Like /reply, but opens in external editor ($VISUAL/$EDITOR). Use --raw to skip annotation header.",
+		description: "Like /reply, but opens in external editor ($VISUAL/$EDITOR). Use --raw to skip header, --diff to wrap content in a diff fence.",
 		handler: async (args, ctx) => {
-			const { raw, cleanArgs } = extractRawFlag(args);
-			await runReply(ctx, cleanArgs, { externalEditor: true, raw });
+			const { raw, diff, cleanArgs } = extractReplyFlags(args);
+			await runReply(ctx, cleanArgs, { externalEditor: true, raw, diff });
+		},
+	});
+
+	pi.registerCommand("reply-diff", {
+		description: "Alias for /reply --diff",
+		handler: async (args, ctx) => {
+			const { raw, cleanArgs } = extractReplyFlags(args);
+			await runReply(ctx, cleanArgs, { externalEditor: false, raw, diff: true });
+		},
+	});
+
+	pi.registerCommand("reply-diff-editor", {
+		description: "Alias for /reply-editor --diff",
+		handler: async (args, ctx) => {
+			const { raw, cleanArgs } = extractReplyFlags(args);
+			await runReply(ctx, cleanArgs, { externalEditor: true, raw, diff: true });
 		},
 	});
 
 	pi.registerCommand("annotated-reply", {
 		description: "Alias for /reply",
 		handler: async (args, ctx) => {
-			const { raw, cleanArgs } = extractRawFlag(args);
-			await runReply(ctx, cleanArgs, { externalEditor: false, raw });
+			const { raw, diff, cleanArgs } = extractReplyFlags(args);
+			await runReply(ctx, cleanArgs, { externalEditor: false, raw, diff });
 		},
 	});
 
 	pi.registerCommand("annotated-reply-editor", {
 		description: "Alias for /reply-editor",
 		handler: async (args, ctx) => {
-			const { raw, cleanArgs } = extractRawFlag(args);
-			await runReply(ctx, cleanArgs, { externalEditor: true, raw });
+			const { raw, diff, cleanArgs } = extractReplyFlags(args);
+			await runReply(ctx, cleanArgs, { externalEditor: true, raw, diff });
+		},
+	});
+
+	pi.registerCommand("annotated-reply-diff", {
+		description: "Alias for /reply-diff",
+		handler: async (args, ctx) => {
+			const { raw, cleanArgs } = extractReplyFlags(args);
+			await runReply(ctx, cleanArgs, { externalEditor: false, raw, diff: true });
+		},
+	});
+
+	pi.registerCommand("annotated-reply-diff-editor", {
+		description: "Alias for /reply-diff-editor",
+		handler: async (args, ctx) => {
+			const { raw, cleanArgs } = extractReplyFlags(args);
+			await runReply(ctx, cleanArgs, { externalEditor: true, raw, diff: true });
 		},
 	});
 }

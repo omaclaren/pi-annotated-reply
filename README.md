@@ -9,14 +9,21 @@ Adds an annotated-reply workflow to [pi](https://github.com/badlogic/pi-mono). C
 | `/reply` | Annotate the last model response |
 | `/reply <path>` | Annotate a file (original file is not changed) |
 | `/reply --raw` | Load raw content into editor without annotation header |
+| `/reply --diff` | Wrap content in a `diff` fenced block before loading |
 | `/reply-editor` | Same as `/reply`, but opens in your external editor (`$VISUAL`/`$EDITOR`) |
 | `/reply-editor <path>` | Same as `/reply <path>`, but opens in your external editor |
+| `/reply-diff` | Alias for `/reply --diff` |
+| `/reply-diff-editor` | Alias for `/reply-editor --diff` |
 | `/annotated-reply` | Alias for `/reply` |
 | `/annotated-reply <path>` | Alias for `/reply <path>` |
 | `/annotated-reply-editor` | Alias for `/reply-editor` |
 | `/annotated-reply-editor <path>` | Alias for `/reply-editor <path>` |
+| `/annotated-reply-diff` | Alias for `/reply-diff` |
+| `/annotated-reply-diff-editor` | Alias for `/reply-diff-editor` |
 
-All commands accept `--raw` to skip the annotation header and load bare content into the editor.
+All commands accept:
+- `--raw` to skip the annotation header and load bare content into the editor.
+- `--diff` to wrap source content in a fenced `diff` block. This is useful for syntax-highlighted previews in tools that render fenced code blocks.
 
 ## Prefill format
 
