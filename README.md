@@ -32,6 +32,7 @@ The extension prefills content like:
 ```md
 annotated reply below:
 original source: last model response
+annotation syntax: [an: your note]
 
 ---
 
@@ -43,6 +44,7 @@ or
 ```md
 annotated reply below:
 original source: file ./path/to/file.ts
+annotation syntax: [an: your note]
 
 ---
 
@@ -51,7 +53,7 @@ original source: file ./path/to/file.ts
 
 ## Annotation style (suggested)
 
-A simple pattern is to keep source text and add notes in square brackets, e.g. `[like this]`.
+A simple default is `[an: your note]`, inline with the source text.
 
 This is only a suggested pattern, not a strict format. Use whatever annotation style is clear for your workflow.
 

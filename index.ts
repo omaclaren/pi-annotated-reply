@@ -213,7 +213,7 @@ function getFileSource(ctx: ExtensionCommandContext, args: string): AnnotationSo
 }
 
 function buildPrefill(source: AnnotationSource): string {
-	return `annotated reply below:\noriginal source: ${source.label}\n\n---\n\n${source.markdown}\n\n`;
+	return `annotated reply below:\noriginal source: ${source.label}\nannotation syntax: [an: your note]\n\n---\n\n${source.markdown}\n\n`;
 }
 
 function isSingleDiffFence(markdown: string): boolean {
