@@ -407,6 +407,22 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+	pi.registerCommand("load-content", {
+		description: "Alias for /reply --raw",
+		handler: async (args, ctx) => {
+			const { diff, cleanArgs } = extractReplyFlags(args);
+			await runReply(ctx, cleanArgs, { externalEditor: false, raw: true, diff });
+		},
+	});
+
+	pi.registerCommand("load-content-editor", {
+		description: "Alias for /reply-editor --raw",
+		handler: async (args, ctx) => {
+			const { diff, cleanArgs } = extractReplyFlags(args);
+			await runReply(ctx, cleanArgs, { externalEditor: true, raw: true, diff });
+		},
+	});
+
 	pi.registerCommand("reply-diff", {
 		description: "Alias for /reply --diff",
 		handler: async (args, ctx) => {

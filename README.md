@@ -12,6 +12,10 @@ Adds an annotated-reply workflow to [pi](https://github.com/badlogic/pi-mono). C
 | `/reply --diff` | Wrap content in a `diff` fenced block before loading |
 | `/reply-editor` | Same as `/reply`, but opens in your external editor (`$VISUAL`/`$EDITOR`) |
 | `/reply-editor <path>` | Same as `/reply <path>`, but opens in your external editor |
+| `/load-content` | Alias for `/reply --raw` |
+| `/load-content <path>` | Alias for `/reply <path> --raw` |
+| `/load-content-editor` | Alias for `/reply-editor --raw` |
+| `/load-content-editor <path>` | Alias for `/reply-editor <path> --raw` |
 | `/reply-diff` | Alias for `/reply --diff` |
 | `/reply-diff-editor` | Alias for `/reply-editor --diff` |
 | `/annotated-reply` | Alias for `/reply` |
