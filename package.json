@@ -1,7 +1,7 @@
 {
   "name": "pi-annotated-reply",
-  "version": "0.3.7",
-  "description": "Annotated reply workflow for pi (model responses and file sources)",
+  "version": "0.4.0",
+  "description": "Annotated reply workflow for pi (model responses, file sources, and git diffs)",
   "type": "module",
   "license": "MIT",
   "keywords": [

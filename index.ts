@@ -8,11 +8,12 @@ import { isAbsolute, join, resolve } from "node:path";
 type AnnotationSource = {
 	label: string;
 	markdown: string;
+	format?: "plain" | "diff";
 };
 
 type AnnotationSourceResult =
 	| { ok: true; source: AnnotationSource }
-	| { ok: false; message: string; level: "warning" | "error" };
+	| { ok: false; message: string; level: "info" | "warning" | "error" };
 
 type ParsedCommand = {
 	command: string;
@@ -208,12 +209,205 @@ function getFileSource(ctx: ExtensionCommandContext, args: string): AnnotationSo
 		source: {
 			label: `file ${normalizedInput}`,
 			markdown,
+			format: detectSourceFormat(normalizedInput, markdown),
 		},
 	};
 }
 
-function buildPrefill(source: AnnotationSource): string {
-	return `annotated reply below:\noriginal source: ${source.label}\nannotation syntax: [an: your note]\nprecedence: later messages supersede these annotations unless user explicitly references them\n\n---\n\n${source.markdown}\n\n--- end annotations ---\n\n`;
+function detectSourceFormat(pathOrLabel: string, markdown: string): "plain" | "diff" {
+	const lower = pathOrLabel.trim().toLowerCase();
+	if (lower.endsWith(".diff") || lower.endsWith(".patch")) return "diff";
+
+	const normalized = markdown.replace(/\r\n/g, "\n").trim();
+	if (!normalized) return "plain";
+	if (/^(```|~~~)diff\b[\s\S]*\n\1\s*$/i.test(normalized)) return "diff";
+	if (/^diff --git a\/.+ b\/.+/m.test(normalized)) return "diff";
+	if (/^---\s+.+$/m.test(normalized) && /^\+\+\+\s+.+$/m.test(normalized) && /^@@\s+/m.test(normalized)) return "diff";
+	return "plain";
+}
+
+function splitGitPathOutput(output: string): string[] {
+	return output
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.filter((line) => line.length > 0);
+}
+
+function formatSpawnFailure(
+	result: { stdout?: string | Buffer | null; stderr?: string | Buffer | null },
+	args: string[],
+): string {
+	const stderr = typeof result.stderr === "string"
+		? result.stderr.trim()
+		: (result.stderr ? result.stderr.toString("utf-8").trim() : "");
+	const stdout = typeof result.stdout === "string"
+		? result.stdout.trim()
+		: (result.stdout ? result.stdout.toString("utf-8").trim() : "");
+	return stderr || stdout || `git ${args.join(" ")} failed`;
+}
+
+function readTextFileIfPossible(path: string): string | null {
+	try {
+		const content = readFileSync(path, "utf-8").replace(/\r\n/g, "\n");
+		if (content.includes("\u0000")) return null;
+		return content;
+	} catch {
+		return null;
+	}
+}
+
+function buildSyntheticNewFileDiff(filePath: string, content: string): string {
+	const lines = content.split("\n");
+	if (lines.length > 0 && lines[lines.length - 1] === "") {
+		lines.pop();
+	}
+
+	const diffLines = [
+		`diff --git a/${filePath} b/${filePath}`,
+		"new file mode 100644",
+		"--- /dev/null",
+		`+++ b/${filePath}`,
+		`@@ -0,0 +1,${lines.length} @@`,
+	];
+
+	if (lines.length > 0) {
+		diffLines.push(lines.map((line) => `+${line}`).join("\n"));
+	}
+
+	return diffLines.join("\n");
+}
+
+function getGitDiffSource(ctx: ExtensionCommandContext): AnnotationSourceResult {
+	const repoRootArgs = ["rev-parse", "--show-toplevel"];
+	const repoRootResult = spawnSync("git", repoRootArgs, {
+		cwd: ctx.cwd,
+		encoding: "utf-8",
+	});
+	if (repoRootResult.status !== 0) {
+		return {
+			ok: false,
+			level: "warning",
+			message: "Not inside a git repository.",
+		};
+	}
+	const repoRoot = repoRootResult.stdout.trim();
+
+	const hasHead =
+		spawnSync("git", ["rev-parse", "--verify", "HEAD"], {
+			cwd: repoRoot,
+			encoding: "utf-8",
+		}).status === 0;
+
+	const untrackedArgs = ["ls-files", "--others", "--exclude-standard"];
+	const untrackedResult = spawnSync("git", untrackedArgs, {
+		cwd: repoRoot,
+		encoding: "utf-8",
+	});
+	if (untrackedResult.status !== 0) {
+		return {
+			ok: false,
+			level: "error",
+			message: `Failed to list untracked files: ${formatSpawnFailure(untrackedResult, untrackedArgs)}`,
+		};
+	}
+	const untrackedPaths = splitGitPathOutput(untrackedResult.stdout ?? "").sort();
+
+	let diffOutput = "";
+	let statSummary = "";
+	let currentTreeFileCount = 0;
+
+	if (hasHead) {
+		const diffArgs = ["diff", "HEAD", "--unified=3", "--find-renames", "--no-color", "--"];
+		const diffResult = spawnSync("git", diffArgs, {
+			cwd: repoRoot,
+			encoding: "utf-8",
+		});
+		if (diffResult.status !== 0) {
+			return {
+				ok: false,
+				level: "error",
+				message: `Failed to collect git diff: ${formatSpawnFailure(diffResult, diffArgs)}`,
+			};
+		}
+		diffOutput = diffResult.stdout ?? "";
+
+		const statArgs = ["diff", "HEAD", "--stat", "--find-renames", "--no-color", "--"];
+		const statResult = spawnSync("git", statArgs, {
+			cwd: repoRoot,
+			encoding: "utf-8",
+		});
+		if (statResult.status === 0) {
+			const statLines = splitGitPathOutput(statResult.stdout ?? "");
+			statSummary = statLines.length > 0 ? (statLines[statLines.length - 1] ?? "") : "";
+		}
+	} else {
+		const trackedArgs = ["ls-files", "--cached"];
+		const trackedResult = spawnSync("git", trackedArgs, {
+			cwd: repoRoot,
+			encoding: "utf-8",
+		});
+		if (trackedResult.status !== 0) {
+			return {
+				ok: false,
+				level: "error",
+				message: `Failed to inspect tracked files: ${formatSpawnFailure(trackedResult, trackedArgs)}`,
+			};
+		}
+
+		const trackedPaths = splitGitPathOutput(trackedResult.stdout ?? "");
+		const currentTreePaths = Array.from(new Set([...trackedPaths, ...untrackedPaths])).sort();
+		currentTreeFileCount = currentTreePaths.length;
+		diffOutput = currentTreePaths
+			.map((filePath) => {
+				const content = readTextFileIfPossible(join(repoRoot, filePath));
+				if (content == null) return "";
+				return buildSyntheticNewFileDiff(filePath, content);
+			})
+			.filter((section) => section.length > 0)
+			.join("\n\n");
+	}
+
+	const untrackedSections = hasHead
+		? untrackedPaths
+			.map((filePath) => {
+				const content = readTextFileIfPossible(join(repoRoot, filePath));
+				if (content == null) return "";
+				return buildSyntheticNewFileDiff(filePath, content);
+			})
+			.filter((section) => section.length > 0)
+		: [];
+
+	const fullDiff = [diffOutput.trimEnd(), ...untrackedSections].filter(Boolean).join("\n\n");
+	if (!fullDiff.trim()) {
+		return {
+			ok: false,
+			level: "info",
+			message: "No uncommitted changes to review.",
+		};
+	}
+
+	const summaryParts: string[] = [];
+	if (hasHead && statSummary) {
+		summaryParts.push(statSummary);
+	}
+	if (!hasHead && currentTreeFileCount > 0) {
+		summaryParts.push(`${currentTreeFileCount} file${currentTreeFileCount === 1 ? "" : "s"} in current tree`);
+	}
+	if (untrackedPaths.length > 0) {
+		summaryParts.push(`${untrackedPaths.length} untracked file${untrackedPaths.length === 1 ? "" : "s"}`);
+	}
+
+	const labelBase = hasHead ? "git diff HEAD" : "git diff (no commits yet)";
+	const label = summaryParts.length > 0 ? `${labelBase} (${summaryParts.join(", ")})` : labelBase;
+
+	return {
+		ok: true,
+		source: {
+			label,
+			markdown: fullDiff,
+			format: "diff",
+		},
+	};
 }
 
 function isSingleDiffFence(markdown: string): boolean {
@@ -228,6 +422,17 @@ function wrapAsDiffFence(markdown: string): string {
 	const trimmed = markdown.trimEnd();
 	const marker = trimmed.includes("```") ? "~~~" : "```";
 	return `${marker}diff\n${trimmed}\n${marker}`;
+}
+
+function formatSourceMarkdownForPrefill(source: AnnotationSource): string {
+	if (source.format === "diff") {
+		return wrapAsDiffFence(source.markdown);
+	}
+	return source.markdown;
+}
+
+function buildPrefill(source: AnnotationSource): string {
+	return `annotated reply below:\noriginal source: ${source.label}\nannotation syntax: [an: your note]\nprecedence: later messages supersede these annotations unless user explicitly references them\n\n---\n\n${formatSourceMarkdownForPrefill(source)}\n\n--- end annotations ---\n\n`;
 }
 
 function loadEditedContentIntoEditor(ctx: ExtensionCommandContext, edited: string): void {
@@ -328,18 +533,30 @@ async function runReply(
 
 	await ctx.waitForIdle();
 
-	const sourceResult = parsePathArgument(args)
-		? getFileSource(ctx, args)
-		: getLastAssistantSource(ctx);
+	const pathArg = parsePathArgument(args);
+	if (options.diff && pathArg) {
+		ctx.ui.notify(
+			"This command reviews current git changes and does not take a path. To annotate a saved diff file, use /reply <path> or /reply-editor <path>.",
+			"warning",
+		);
+		return;
+	}
+
+	let sourceResult: AnnotationSourceResult;
+	if (options.diff) {
+		sourceResult = getGitDiffSource(ctx);
+	} else if (pathArg) {
+		sourceResult = getFileSource(ctx, args);
+	} else {
+		sourceResult = getLastAssistantSource(ctx);
+	}
 
 	if (!sourceResult.ok) {
 		ctx.ui.notify(sourceResult.message, sourceResult.level);
 		return;
 	}
 
-	const source = options.diff
-		? { ...sourceResult.source, markdown: wrapAsDiffFence(sourceResult.source.markdown) }
-		: sourceResult.source;
+	const source = sourceResult.source;
 
 	const content = options.raw
 		? source.markdown + "\n"
@@ -392,7 +609,7 @@ function extractReplyFlags(args: string): ReplyFlags {
 
 export default function (pi: ExtensionAPI) {
 	pi.registerCommand("reply", {
-		description: "Annotate the last model response, or a file with /reply <path>. Use --raw to skip header, --diff to wrap content in a diff fence.",
+		description: "Annotate the last model response, or a file with /reply <path>. Use --raw to skip header, --diff to review uncommitted git changes.",
 		handler: async (args, ctx) => {
 			const { raw, diff, cleanArgs } = extractReplyFlags(args);
 			await runReply(ctx, cleanArgs, { externalEditor: false, raw, diff });
@@ -400,7 +617,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("reply-editor", {
-		description: "Like /reply, but opens in external editor ($VISUAL/$EDITOR). Use --raw to skip header, --diff to wrap content in a diff fence.",
+		description: "Like /reply, but opens in external editor ($VISUAL/$EDITOR). Use --raw to skip header, --diff to review uncommitted git changes.",
 		handler: async (args, ctx) => {
 			const { raw, diff, cleanArgs } = extractReplyFlags(args);
 			await runReply(ctx, cleanArgs, { externalEditor: true, raw, diff });
@@ -424,7 +641,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("reply-diff", {
-		description: "Alias for /reply --diff",
+		description: "Review uncommitted git changes in annotation format",
 		handler: async (args, ctx) => {
 			const { raw, cleanArgs } = extractReplyFlags(args);
 			await runReply(ctx, cleanArgs, { externalEditor: false, raw, diff: true });
@@ -432,7 +649,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("reply-diff-editor", {
-		description: "Alias for /reply-editor --diff",
+		description: "Review uncommitted git changes in external editor",
 		handler: async (args, ctx) => {
 			const { raw, cleanArgs } = extractReplyFlags(args);
 			await runReply(ctx, cleanArgs, { externalEditor: true, raw, diff: true });
@@ -456,7 +673,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("annotated-reply-diff", {
-		description: "Alias for /reply-diff",
+		description: "Review uncommitted git changes in annotation format",
 		handler: async (args, ctx) => {
 			const { raw, cleanArgs } = extractReplyFlags(args);
 			await runReply(ctx, cleanArgs, { externalEditor: false, raw, diff: true });
@@ -464,7 +681,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("annotated-reply-diff-editor", {
-		description: "Alias for /reply-diff-editor",
+		description: "Review uncommitted git changes in external editor",
 		handler: async (args, ctx) => {
 			const { raw, cleanArgs } = extractReplyFlags(args);
 			await runReply(ctx, cleanArgs, { externalEditor: true, raw, diff: true });
