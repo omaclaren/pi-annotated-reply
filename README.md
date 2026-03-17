@@ -40,7 +40,7 @@ The extension prefills content like:
 ```md
 annotated reply below:
 original source: last model response
-annotation syntax: [an: your note]
+user annotation syntax: [an: note]
 
 ---
 
@@ -52,7 +52,7 @@ or
 ```md
 annotated reply below:
 original source: file ./path/to/file.ts
-annotation syntax: [an: your note]
+user annotation syntax: [an: note]
 
 ---
 
@@ -64,7 +64,7 @@ or
 ```md
 annotated reply below:
 original source: git diff HEAD (2 files changed, 15 insertions(+), 3 deletions(-), 1 untracked file)
-annotation syntax: [an: your note]
+user annotation syntax: [an: note]
 
 ---
 
@@ -76,7 +76,7 @@ diff --git a/src/index.ts b/src/index.ts
 
 ## Annotation style (suggested)
 
-A simple default is `[an: your note]`, inline with the source text.
+A simple default is `[an: note]`, inline with the source text.
 
 This is only a suggested pattern, not a strict format. Use whatever annotation style is clear for your workflow.
 

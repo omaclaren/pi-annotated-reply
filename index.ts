@@ -432,7 +432,7 @@ function formatSourceMarkdownForPrefill(source: AnnotationSource): string {
 }
 
 function buildPrefill(source: AnnotationSource): string {
-	return `annotated reply below:\noriginal source: ${source.label}\nannotation syntax: [an: your note]\nprecedence: later messages supersede these annotations unless user explicitly references them\n\n---\n\n${formatSourceMarkdownForPrefill(source)}\n\n--- end annotations ---\n\n`;
+	return `annotated reply below:\noriginal source: ${source.label}\nuser annotation syntax: [an: note]\nprecedence: later messages supersede these annotations unless user explicitly references them\n\n---\n\n${formatSourceMarkdownForPrefill(source)}\n\n--- end annotations ---\n\n`;
 }
 
 function loadEditedContentIntoEditor(ctx: ExtensionCommandContext, edited: string): void {
