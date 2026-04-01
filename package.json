@@ -18,5 +18,13 @@
   },
   "peerDependencies": {
     "@mariozechner/pi-coding-agent": "*"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@mariozechner/pi-coding-agent": "^0.64.0",
+    "@types/node": "^24.3.0",
+    "typescript": "^5.7.3"
   }
 }

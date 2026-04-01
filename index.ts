@@ -590,7 +590,8 @@ async function runReply(
 			ctx.ui.notify("Cancelled.", "info");
 			return;
 		}
-		ctx.ui.notify(`External editor failed: ${result.message}`, "error");
+		const message = "message" in result ? result.message : "Unknown error";
+		ctx.ui.notify(`External editor failed: ${message}`, "error");
 		return;
 	}
 
